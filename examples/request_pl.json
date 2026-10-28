@@ -1,0 +1,8 @@
+{"state": "Klient: od wczoraj nie mogę zalogować się do aplikacji, a jutro muszę zapłacić rachunek.",
+ "questions": {
+  "dzial": {"type": "choice", "instructions": "Do którego działu skierować zgłoszenie?",
+            "criteria": {"karty": "Karty płatnicze", "online": "Bankowość internetowa", "kredyty": "Kredyty"}},
+  "pilne": {"type": "noul", "instructions": "Czy sprawa jest pilna?"},
+  "ton": {"type": "score", "instructions": "Jak bardzo zdenerwowany jest klient?",
+          "criteria": ["spokojny", "lekko zaniepokojony", "zdenerwowany", "bardzo zdenerwowany"]}
+ }}

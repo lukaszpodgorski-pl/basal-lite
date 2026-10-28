@@ -1,0 +1,10 @@
+{"state": "Customer: I have not been able to log in to the app since yesterday and I have to pay a bill tomorrow.",
+ "questions": {
+  "team": {"type": "choice", "instructions": "Which team should handle this ticket?",
+           "criteria": {"cards": "Payment cards", "online": "Online banking", "loans": "Loans"}},
+  "urgent": {"type": "noul", "instructions": "Is this urgent?"},
+  "mood": {"type": "score", "instructions": "How upset is the customer?",
+           "criteria": ["calm", "slightly worried", "upset", "very upset"]},
+  "topics": {"type": "multi", "instructions": "Which topics does the message raise?",
+             "criteria": ["login", "payment", "card", "complaint"]}
+ }}

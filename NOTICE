@@ -1,0 +1,8 @@
+basal-lite
+Licensed under the Apache License, Version 2.0 (LICENSE).
+
+This product includes software from basal (https://github.com/rkinas/basal), Apache License 2.0:
+- src/basal_lite/_basal/: prompt.py, tasks.py, tools.py, sets.py, facts.py, media.py from basal 2.4.1, unmodified
+  except the import of NO_CERTIFICATE and certified in tools.py, which points to basal_lite.client;
+- src/basal_lite/client.py: the functions between the "copied from basal/server.py" and "end of the copy" markers;
+- tools/data/format2_vectors.jsonl: basal's docs/format2_vectors.jsonl.

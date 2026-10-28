@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "basal-lite"
+version = "2.4.1.post1"
+description = "basal decisions from a stock vLLM server: basal-serve's logic as a small client, no basal server"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = ["httpx", "numpy"]
+keywords = ["basal", "vllm", "llm", "classification", "calibration", "decision"]
+
+[project.optional-dependencies]
+media = ["pillow", "soundfile", "scipy"]
+dev = ["pytest"]
+
+[project.scripts]
+basal-lite = "basal_lite.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+extend-exclude = ["src/basal_lite/_basal"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]  # client.py keeps basal's copied code verbatim (tools/check_copies.py)
+ignore = ["E501"]
