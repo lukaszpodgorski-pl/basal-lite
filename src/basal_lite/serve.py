@@ -6,6 +6,7 @@ from Hugging Face when it is not in the local cache, and optionally the think se
     basal-lite flags basal-2.0-4.5B                         # only print the vllm serve flags
     basal-lite stop
 """
+
 import json
 import os
 import subprocess
@@ -45,18 +46,37 @@ def download(model, think=False, image=IMAGE):
     hub = hub_dir()
     hub.mkdir(parents=True, exist_ok=True)
     ignore = "[]" if think else "['think/*']"
-    run(["docker", "run", "--rm", "-v", f"{hub}:/hf", "-e", "HF_HUB_CACHE=/hf", "--entrypoint", "python3", image, "-c",
-         f"from huggingface_hub import snapshot_download; snapshot_download('{repo_id(model)}', ignore_patterns={ignore})"])
+    run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{hub}:/hf",
+            "-e",
+            "HF_HUB_CACHE=/hf",
+            "--entrypoint",
+            "python3",
+            image,
+            "-c",
+            f"from huggingface_hub import snapshot_download; snapshot_download('{repo_id(model)}', ignore_patterns={ignore})",
+        ]
+    )
     return snapshot(model)
 
 
 def flags(md, template_dir=None, container_template_dir="/templates"):
     """vllm serve flags for the client and the model in `md`. Gemma 4: the server chat template (template.py) is written
     to template_dir, which the server sees as container_template_dir."""
-    a = ["--max-logprobs", "255",                        # up to 255 options; the client reads the logprob of each one
-         "--logprobs-mode", "processed_logprobs",        # log-probabilities after the restriction to the option codes
-         "--generation-config", "vllm",                  # no default temperature / top-p from the model's files
-         "--enable-prompt-tokens-details"]               # cached prompt tokens in the usage
+    a = [
+        "--max-logprobs",
+        "255",  # up to 255 options; the client reads the logprob of each one
+        "--logprobs-mode",
+        "processed_logprobs",  # log-probabilities after the restriction to the option codes
+        "--generation-config",
+        "vllm",  # no default temperature / top-p from the model's files
+        "--enable-prompt-tokens-details",
+    ]  # cached prompt tokens in the usage
     cfg = json.loads((Path(md) / "config.json").read_text(encoding="utf-8"))
     text = cfg.get("text_config") or cfg
     if text.get("num_kv_shared_layers"):
@@ -64,8 +84,9 @@ def flags(md, template_dir=None, container_template_dir="/templates"):
     tpl = serve_template(md)
     if tpl is None:  # Llama, Qwen3.5: the model's own template; string content (no list rendering)
         return a + ["--chat-template-content-format", "string"]
-    name = Path(md).parent.parent.name.removeprefix("models--") if Path(md).parent.name == "snapshots" \
-        else Path(md).name
+    name = (
+        Path(md).parent.parent.name.removeprefix("models--") if Path(md).parent.name == "snapshots" else Path(md).name
+    )
     template_dir = Path(template_dir or Path.home() / ".cache" / "basal-lite" / "templates")
     template_dir.mkdir(parents=True, exist_ok=True)
     (template_dir / f"{name}.jinja").write_text(tpl, encoding="utf-8")
@@ -73,16 +94,34 @@ def flags(md, template_dir=None, container_template_dir="/templates"):
     unified = "Gemma4UnifiedForConditionalGeneration" in (cfg.get("architectures") or ())
     image_n = 8 if cfg.get("vision_config") and not unified else 0
     audio_n = 8 if cfg.get("audio_config") and not unified else 0
-    return a + ["--chat-template-content-format", "openai", "--chat-template", f"{container_template_dir}/{name}.jinja",
-                f"--limit-mm-per-prompt.image={image_n}", f"--limit-mm-per-prompt.audio={audio_n}",
-                "--limit-mm-per-prompt.video=0",
-                "--trust-request-mm-kwargs"]  # only for "detail": "high"
+    return a + [
+        "--chat-template-content-format",
+        "openai",
+        "--chat-template",
+        f"{container_template_dir}/{name}.jinja",
+        f"--limit-mm-per-prompt.image={image_n}",
+        f"--limit-mm-per-prompt.audio={audio_n}",
+        "--limit-mm-per-prompt.video=0",
+        "--trust-request-mm-kwargs",
+    ]  # only for "detail": "high"
 
 
 def think_flags():
     """The think server (basal/think.py Sidecar): greedy reasoning and the second readout on the think/ weights."""
-    return ["--dtype", "bfloat16", "--max-model-len", "8192", "--seed", "0", "--generation-config", "vllm",
-            "--logprobs-mode", "processed_logprobs", "--max-logprobs", "255"]
+    return [
+        "--dtype",
+        "bfloat16",
+        "--max-model-len",
+        "8192",
+        "--seed",
+        "0",
+        "--generation-config",
+        "vllm",
+        "--logprobs-mode",
+        "processed_logprobs",
+        "--max-logprobs",
+        "255",
+    ]
 
 
 def run(cmd, check=True):
@@ -91,13 +130,44 @@ def run(cmd, check=True):
 
 def start(name, port, md_in_container, vllm_flags, *, gpu, max_len, hub, template_dir, network, always, image):
     run(["docker", "rm", "-f", name], check=False)
-    cmd = ["docker", "run", "-d", "--name", name, "-p", f"{port}:8000", "--gpus", "all", "--ipc", "host",
-           "--restart", "unless-stopped" if always else "no", "-e", "HF_HUB_OFFLINE=1",
-           "-v", f"{hub}:/hf:ro", "-v", f"{template_dir}:/templates:ro"]
+    cmd = [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        name,
+        "-p",
+        f"{port}:8000",
+        "--gpus",
+        "all",
+        "--ipc",
+        "host",
+        "--restart",
+        "unless-stopped" if always else "no",
+        "-e",
+        "HF_HUB_OFFLINE=1",
+        "-v",
+        f"{hub}:/hf:ro",
+        "-v",
+        f"{template_dir}:/templates:ro",
+    ]
     if network:
         cmd += ["--network", network]
-    cmd += ["--entrypoint", "vllm", image, "serve", md_in_container, "--served-model-name", "basal",
-            "--host", "0.0.0.0", "--port", "8000", "--gpu-memory-utilization", str(gpu)]
+    cmd += [
+        "--entrypoint",
+        "vllm",
+        image,
+        "serve",
+        md_in_container,
+        "--served-model-name",
+        "basal",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--gpu-memory-utilization",
+        str(gpu),
+    ]
     if max_len:
         cmd += ["--max-model-len", str(max_len)]
     subprocess.run(cmd + vllm_flags, check=True, stdout=subprocess.DEVNULL)  # (stdout: the container id)

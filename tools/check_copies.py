@@ -4,6 +4,7 @@ differs. Run after every new basal release; exit 1 when a copy no longer matches
 
     python tools/check_copies.py <basal checkout>/basal/server.py
 """
+
 import ast
 import sys
 from pathlib import Path
@@ -19,8 +20,14 @@ def defs(src, lines=None):
         if lines and not lines[0] <= node.lineno <= lines[1]:
             continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            body = node.body[1:] if node.body and isinstance(node.body[0], ast.Expr) and \
-                isinstance(node.body[0].value, ast.Constant) and isinstance(node.body[0].value.value, str) else node.body
+            body = (
+                node.body[1:]
+                if node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+                else node.body
+            )
             out[node.name] = ast.dump(node.args) + "".join(map(ast.dump, body))
         elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             out[node.targets[0].id] = ast.dump(node.value)

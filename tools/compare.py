@@ -12,6 +12,7 @@ text requests with "think": "force" and the reasoning text (basal-serve --think 
 compare: the decisions (every non-number field of every answer, recursively: choice, action, selected, tool, labels,
 spans, max_error, calibration, ...) must be equal; numbers are measurements; max |d| over the probabilities and confidences.
 """
+
 import argparse
 import asyncio
 import base64
@@ -28,12 +29,19 @@ def requests(which="text"):
         out = []
         for it in map(json.loads, (d / "przypadki.jsonl").read_text(encoding="utf-8").splitlines()):
             req = {k: it[k] for k in it if k != "id"}
-            sent = dict(req, media=[{"type": m["type"], "data": base64.b64encode((d / m["file"]).read_bytes()).decode()}
-                                    for m in req["media"]])
+            sent = dict(
+                req,
+                media=[
+                    {"type": m["type"], "data": base64.b64encode((d / m["file"]).read_bytes()).decode()}
+                    for m in req["media"]
+                ],
+            )
             out.append((it["id"], req, sent))
         return out
-    out = [(v["id"], v["request"]) for v in map(json.loads, (DATA / "format2_vectors.jsonl").read_text(
-        encoding="utf-8").splitlines())]
+    out = [
+        (v["id"], v["request"])
+        for v in map(json.loads, (DATA / "format2_vectors.jsonl").read_text(encoding="utf-8").splitlines())
+    ]
     for f in ("tasks.jsonl", "max_error.jsonl"):
         for it in map(json.loads, (DATA / f).read_text(encoding="utf-8").splitlines()):
             out.append((it["id"], {k: it[k] for k in it if k != "id"}))
@@ -52,8 +60,10 @@ def requests(which="text"):
 
 async def collect(a):
     import httpx
+
     if a.cmd == "lite":
         from basal_lite import BasalLite
+
         orders = int(a.orders) if a.orders in ("1", "2") else a.orders
         b = BasalLite(a.url, "basal", model_dir=a.model_dir, orders=orders, think_url=a.think_url)
     http = httpx.AsyncClient(timeout=300)
@@ -80,6 +90,7 @@ async def tempo(a):
 
     import httpx
     from basal_lite import BasalLite
+
     b = BasalLite(a.url, "basal", model_dir=a.model_dir, orders=int(a.orders or 1)) if a.target == "lite" else None
     http = httpx.AsyncClient(timeout=600, limits=httpx.Limits(max_connections=256))
     sem = asyncio.Semaphore(a.concurrency)
@@ -100,9 +111,20 @@ async def tempo(a):
         res = await asyncio.gather(*(one(x) for x in bodies), return_exceptions=True)
         wall = time.perf_counter() - t0
         ok = [r for r in res if isinstance(r, int)]
-        print(json.dumps({"target": a.target, "kind": kind, "cases": len(group), "requests": a.n,
-                          "concurrency": a.concurrency, "decisions_per_s": round(sum(ok) / wall, 2),
-                          "requests_per_s": round(len(ok) / wall, 2), "errors": len(res) - len(ok)}))
+        print(
+            json.dumps(
+                {
+                    "target": a.target,
+                    "kind": kind,
+                    "cases": len(group),
+                    "requests": a.n,
+                    "concurrency": a.concurrency,
+                    "decisions_per_s": round(sum(ok) / wall, 2),
+                    "requests_per_s": round(len(ok) / wall, 2),
+                    "errors": len(res) - len(ok),
+                }
+            )
+        )
 
 
 def walk(x, y, path, diffs, worst):
@@ -116,7 +138,9 @@ def walk(x, y, path, diffs, worst):
             for i, (u, v) in enumerate(zip(x, y)):
                 walk(u, v, f"{path}[{i}]", diffs, worst)
         elif x != y:
-            diffs.append(f"{path}: {json.dumps(x, ensure_ascii=False)[:80]} vs {json.dumps(y, ensure_ascii=False)[:80]}")
+            diffs.append(
+                f"{path}: {json.dumps(x, ensure_ascii=False)[:80]} vs {json.dumps(y, ensure_ascii=False)[:80]}"
+            )
     elif ("probabilit" in path or "confidence" in path or path.endswith("/noul")) and abs(x - y) > worst[0]:
         worst[:] = [abs(x - y), path]
 
@@ -145,8 +169,17 @@ def compare(a):
             print("differs:", d)
     for e in errs:
         print("error:", e)
-    print(json.dumps({"requests": len(ref), "same_decisions": f"{same}/{len(ref)}", "max_d": round(worst[0], 4),
-                      "max_d_at": worst[1], "same_input_tokens": f"{sum(tok)}/{len(tok)}"}))
+    print(
+        json.dumps(
+            {
+                "requests": len(ref),
+                "same_decisions": f"{same}/{len(ref)}",
+                "max_d": round(worst[0], 4),
+                "max_d_at": worst[1],
+                "same_input_tokens": f"{sum(tok)}/{len(tok)}",
+            }
+        )
+    )
 
 
 def main():
@@ -162,7 +195,9 @@ def main():
     ap.add_argument("--orders", default=None)
     ap.add_argument("--out")
     ap.add_argument("--set", choices=["text", "media", "long", "think"], default="text")
-    ap.add_argument("--think-url", dest="think_url", default=None, help="lite: the think server (vLLM on <model>/think)")
+    ap.add_argument(
+        "--think-url", dest="think_url", default=None, help="lite: the think server (vLLM on <model>/think)"
+    )
     a = ap.parse_args()
     compare(a) if a.cmd == "compare" else asyncio.run(tempo(a) if a.cmd == "tempo" else collect(a))
 

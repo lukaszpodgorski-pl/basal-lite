@@ -1,7 +1,8 @@
 """basal-lite from Python: start the server first (basal-lite serve basal-omni-1.0-mini), then
 
-    python examples/quickstart.py
+python examples/quickstart.py
 """
+
 import asyncio
 import json
 from pathlib import Path

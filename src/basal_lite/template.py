@@ -8,13 +8,17 @@ string). Two changes, both only where the model's template has the pattern:
    template strips any thought block from an assistant turn, so the prefilled answer turn (continue_final_message) never
    gets it. It is added when the assistant turn is the last one.
 """
+
 from pathlib import Path
 
 SPACE = ("{{- item['text'] | trim + ' '-}}", "{{- item['text'] | trim -}}")
 THOUGHT = "{{- '<|channel>thought\\n<channel|>' -}}"
 HEAD = "{{- '<|turn>' + role + '\\n' }}"
-HEAD_THOUGHT = HEAD + ("{%- if role == 'model' and loop.last and not add_generation_prompt and not enable_thinking -%}"
-                       + THOUGHT + "{%- endif -%}")
+HEAD_THOUGHT = HEAD + (
+    "{%- if role == 'model' and loop.last and not add_generation_prompt and not enable_thinking -%}"
+    + THOUGHT
+    + "{%- endif -%}"
+)
 
 
 def serve_template(model_dir):

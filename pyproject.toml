@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "basal-lite"
-version = "2.4.1.post1"
+version = "2.4.1.1"
 description = "basal decisions from a stock vLLM server: basal-serve's logic as a small client, no basal server"
 readme = "README.md"
 license = "Apache-2.0"
@@ -14,7 +14,9 @@ keywords = ["basal", "vllm", "llm", "classification", "calibration", "decision"]
 
 [project.optional-dependencies]
 media = ["pillow", "soundfile", "scipy"]
-dev = ["pytest"]
+
+[dependency-groups]
+dev = ["pytest", "pytest-cov", "ruff", "pillow", "soundfile", "scipy"]
 
 [project.scripts]
 basal-lite = "basal_lite.__main__:main"
@@ -22,10 +24,22 @@ basal-lite = "basal_lite.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/basal_lite", "tools"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = ['if __name__ == "__main__":']
+
 [tool.ruff]
 line-length = 120
 extend-exclude = ["src/basal_lite/_basal"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W"]  # client.py keeps basal's copied code verbatim (tools/check_copies.py)
+select = ["E", "F", "W"]  # client.py keeps basal's copied code verbatim, inside fmt: off (README.md, "Code copied from basal")
 ignore = ["E501"]

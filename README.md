@@ -137,9 +137,9 @@ Requirements: an NVIDIA GPU, Docker with GPU support, Python 3.10+. The server i
 model are pulled on first start.
 
 ```bash
-pip install -e .                      # or pip install -e .[media] for images and audio
-basal-lite serve basal-omni-1.0-mini  # vLLM in Docker on http://localhost:8000, about 2-4 min to start
-basal-lite ask --model basal-omni-1.0-mini -f examples/request_en.json
+uv sync                                      # or uv sync --extra media for images and audio
+uv run basal-lite serve basal-omni-1.0-mini  # vLLM in Docker on http://localhost:8000, about 2-4 min to start
+uv run basal-lite ask --model basal-omni-1.0-mini -f examples/request_en.json
 ```
 
 The answer for `examples/request_en.json` from basal-omni-pico, the smallest model (rounded, trimmed):
@@ -235,6 +235,26 @@ Gemma 4 (basal-omni-*) additionally needs the server template (`--chat-template`
 | `python tools/check_models.py <cache> out.json` | every `Remek/basal-*` model: prompt, architecture and quantization in this vLLM, calibration, media |
 | `python tools/compare.py ref / lite / compare` | live decisions against `basal-serve` (text, media, long states, think mode) and media throughput (`tempo`) |
 
+### Code copied from basal
+
+basal-lite reuses basal's code instead of re-implementing it, in two places, and both are kept as exact text copies so
+that a new basal release is a plain diff away:
+
+- `src/basal_lite/_basal/` holds basal's pure modules byte for byte (`tools/vendor.py` writes them; one import line
+  differs). Ruff skips the directory (`extend-exclude`).
+- `src/basal_lite/client.py` copies the functions of `basal/server.py` that it needs (that module imports torch), between
+  the `copied from basal/server.py` and `end of the copy` markers. The block sits inside `# fmt: off` / `# fmt: on`, so
+  `ruff format` keeps basal's own line breaks, and E501 is ignored for the same reason. The one line that is not
+  basal's text is `TRUNC_MARK, TRUNC_MARGIN`: a class attribute of basal's `Server`, a module constant here.
+
+Why text and not only behaviour: `tools/check_copies.py` compares the syntax trees and passes however the code is
+wrapped, but a reformatted copy turns every re-wrapped line into a diff line against the next basal release and hides
+its real changes. To check a release, keep a basal checkout in `source/` (ignored by git):
+
+    git clone https://github.com/rkinas/basal source/basal
+    python tools/vendor.py source/basal && git diff src/basal_lite/_basal      # the modules
+    python tools/check_copies.py source/basal/basal/server.py                    # the copied functions
+
 Run `check_prompt.py` and `check_models.py` inside the vLLM image, so they use the server's own `transformers` (another
 version can tokenize the option codes differently), with the repository mounted and `PYTHONPATH=/repo/src`:
 
@@ -260,6 +280,15 @@ tests/            offline tests
 examples/         requests (English, Polish) and a Python example
 docs/MODELS.md    every basal model on basal-lite
 ```
+
+## Versions
+
+The version says which basal release it follows: the first three numbers are basal's, the fourth counts basal-lite
+releases for it (git tags `v<version>`, as basal's own `v2.4.1`).
+
+| basal-lite | basal (prompt format, calibration files, vendored code) | measured on vLLM |
+|---|---|---|
+| 2.4.1.1 | 2.4.1 | 0.32.0 |
 
 ## Status and limits
 

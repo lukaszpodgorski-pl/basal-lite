@@ -8,6 +8,7 @@ basal's server module (which imports torch); the client has its own copy of that
     python tools/vendor.py /tmp/basal
     python tools/check_copies.py /tmp/basal/basal/server.py     # then the functions copied into client.py
 """
+
 import sys
 from pathlib import Path
 
@@ -17,11 +18,16 @@ OUT = Path(__file__).resolve().parents[1] / "src" / "basal_lite" / "_basal"
 
 def main(basal_root):
     src_dir = Path(basal_root) / "basal"
-    for m in MODULES:
+    srcs = {}
+    for m in MODULES:  # every module checked before any is written: a refusal leaves _basal as it was
         src = (src_dir / f"{m}.py").read_text(encoding="utf-8")
-        src = src.replace("from .server import NO_CERTIFICATE, certified", "from ..client import NO_CERTIFICATE, certified")
+        src = src.replace(
+            "from .server import NO_CERTIFICATE, certified", "from ..client import NO_CERTIFICATE, certified"
+        )
         if ".server" in src:
             raise SystemExit(f"{m}.py imports basal's server module: check the copy by hand")
+        srcs[m] = src
+    for m, src in srcs.items():
         (OUT / f"{m}.py").write_text(src, encoding="utf-8")
     print(f"{len(MODULES)} modules -> {OUT}")
 

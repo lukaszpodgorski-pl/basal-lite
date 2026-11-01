@@ -1,10 +1,11 @@
 """basal-lite command line.
 
-    basal-lite serve basal-omni-1.0-mini [--port 8000] [--gpu 0.85] [--think]     # vLLM in Docker
-    basal-lite ask --model basal-omni-1.0-mini < request.json                      # one /v1/systemone request
-    basal-lite flags basal-2.0-4.5B                                                # vllm serve flags for a model
-    basal-lite stop
+basal-lite serve basal-omni-1.0-mini [--port 8000] [--gpu 0.85] [--think]     # vLLM in Docker
+basal-lite ask --model basal-omni-1.0-mini < request.json                      # one /v1/systemone request
+basal-lite flags basal-2.0-4.5B                                                # vllm serve flags for a model
+basal-lite stop
 """
+
 import argparse
 import asyncio
 import json
@@ -37,8 +38,9 @@ def flags(a):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="basal-lite", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        prog="basal-lite", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("ask", help="one request (the body of basal-serve's POST /v1/systemone) from stdin or --file")

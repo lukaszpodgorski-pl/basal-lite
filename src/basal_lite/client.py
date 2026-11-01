@@ -34,6 +34,7 @@ sent together (RTX 3090, 5 questions over 1,500 tokens: 78% of prompt tokens fro
     print(asyncio.run(b.decide({"state": "Klient: nie mogę się zalogować.", "questions": {"dept": {"type": "choice",
           "instructions": "Do którego działu?", "criteria": {"cards": "Karty", "online": "Bankowość"}}}})))
 """
+
 import asyncio
 import json
 import math
@@ -46,8 +47,18 @@ from ._basal import tasks
 from ._basal.facts import inject as inject_facts
 from ._basal.media import SAMPLE_RATE, audio_window, detail_tokens, kinds_of
 from ._basal.media import decode as decode_media
-from ._basal.prompt import FORMATS, MAX_OPTIONS, PREFILL, RequestError, lang_of, media_messages, model_format, \
-    model_layout, reads_request, user_template
+from ._basal.prompt import (
+    FORMATS,
+    MAX_OPTIONS,
+    PREFILL,
+    RequestError,
+    lang_of,
+    media_messages,
+    model_format,
+    model_layout,
+    reads_request,
+    user_template,
+)
 from ._basal.sets import label_set_id
 from ._basal.sets import select as select_set
 from ._basal.sets import validate as validate_set
@@ -60,14 +71,23 @@ from ._basal.tools import set_answer as tool_set_answer
 # ---- copied from basal/server.py 2.4.1 (Apache-2.0), unchanged ------------------------------------------------------
 
 
+# fmt: off
+# basal's text line for line, so a new release diffs cleanly against it (README.md, "Code copied from basal")
+
 def _text(x):
     """Strings as they are; structured values (objects, lists, numbers) as compact JSON."""
     return x if isinstance(x, str) else json.dumps(x, ensure_ascii=False)
 
 
 def named_options(crit, option_keys="show"):
-    """{key: description} -> option texts shown to the model ("key: description"; "hide": the description alone
-    unless it is not unique)."""
+    """{key: description} -> option texts shown to the model.
+
+    option_keys="show" (default): every described option is shown as "key: description", because only the caller knows
+    whether a key is meaningful (a service code "B", a decision name "approve"); the server never guesses. A key without
+    a description is shown by itself.
+    option_keys="hide": the caller states that the keys are placeholders and the descriptions alone define the options
+    (the format of the training data and of our PL/EN evaluation clients); descriptions that are not unique within the
+    question still get their key, otherwise the options could not be told apart."""
     if option_keys not in ("show", "hide"):
         raise RequestError(f'option_keys must be "show" or "hide", got {option_keys!r}')
     texts = [str(k) if v is None else _text(v) for k, v in crit.items()]
@@ -87,6 +107,7 @@ def yes_no(lang, crit=None):
 
 
 def check_body(body):
+    """The shape of a decision request (its questions are read by to_items) -> RequestError (HTTP 422)."""
     if not isinstance(body, dict):
         raise RequestError("the request body must be a JSON object")
     for k in ("state", "questions"):
@@ -98,17 +119,19 @@ def check_body(body):
 
 @reads_request
 def to_items(state, questions, max_opts=MAX_OPTIONS, force_lang=None):
-    """Questions of a request -> readout items with `branches` = [(question text, options)]: one for the decision
-    types, one yes/no branch per label for multi (and tool with "multi": true)."""
+    """Questions of a request -> readout items (options as a list) + keys to assemble the answer. Every item has
+    `branches` = [(question text, options)]: one for the decision types, one per label for `multi`. max_opts: the
+    model's prompt format limit (10 for format 1, 255 for format 2). force_lang: the request's "lang" ("pl" / "en")
+    for every question's template, yes/no words and branch text, instead of the language detected from its text."""
     state = _text(state)
     out = []
-    state_pl = not force_lang and lang_of(state) == "pl"
+    state_pl = not force_lang and lang_of(state) == "pl"  # once per request, not once per question
     for name, q in questions.items():
         t = q.get("type", "choice")
         instr = _text(q.get("instructions", ""))
         lang = force_lang or ("pl" if state_pl else lang_of(instr))
         extra = {}
-        if t == "multi":
+        if t == "multi":  # one yes/no branch per label
             crit = q.get("criteria") or {}
             if isinstance(crit, list):
                 crit = {k: None for k in crit}
@@ -128,7 +151,7 @@ def to_items(state, questions, max_opts=MAX_OPTIONS, force_lang=None):
             out.append(dict(name=name, type=t, keys=keys, state=state, question=instr, options=yn, lang=lang,
                             branches=branches, **extra))
             continue
-        if t == "tool":
+        if t == "tool":  # options from tool definitions (basal/tools.py); "multi": true = one yes/no branch per tool
             keys, opts, names = parse_tools(name, q, lang)
             extra = dict(base="choice", tools=names, rank=q.get("rank"), max_error=q.get("max_error"),
                          multi=bool(q.get("multi")))
@@ -138,6 +161,7 @@ def to_items(state, questions, max_opts=MAX_OPTIONS, force_lang=None):
                 validate_set(name, objective, keys, q.get("threshold"), q.get("min"), q.get("max"), q.get("exclusive"),
                              q.get("fallback"), q.get("fallback_threshold"))
                 yn = yes_no(lang)[1]
+                # the extra options can only be chosen alone (an agent either calls tools or does one of them)
                 excl = list(dict.fromkeys([k for k in keys if k not in names] + (q.get("exclusive") or [])))
                 extra.update(base="noul", threshold=float(q.get("threshold", 0.5)), max=q.get("max"), min=q.get("min"),
                              labels=opts, objective=objective, exclusive=excl, fallback=q.get("fallback"),
@@ -158,15 +182,15 @@ def to_items(state, questions, max_opts=MAX_OPTIONS, force_lang=None):
                     crit = {k: None for k in crit}
                 keys, opts = named_options(crit, q.get("option_keys", "show"))
             extra = dict(base=base, act=act_spec(name, q, keys))
-        elif t == "noul":
+        elif t == "noul":  # yes/no; optional criteria {"true": ..., "false": ...}; answer = P(true)
             keys, opts = yes_no(lang, q.get("criteria"))
-        elif t == "score":
+        elif t == "score":  # ordered levels (list or {key: description})
             crit = q.get("criteria") or q.get("levels") or []
             if isinstance(crit, dict):
                 keys, opts = named_options(crit, q.get("option_keys", "show"))
             else:
                 keys, opts = [str(i) for i in range(len(crit))], [_text(v) for v in crit]
-        else:
+        else:  # choice: {key: description} or [keys]
             crit = q.get("criteria") or {}
             if isinstance(crit, list):
                 crit = {k: None for k in crit}
@@ -202,7 +226,11 @@ NO_CERTIFICATE = "no certified threshold for this type at this max_error"
 
 
 def certified(cal, max_error, q_type):
-    """The certified confidence threshold of a max_error target for a question type, else None (deferred)."""
+    """The certified confidence threshold of a max_error target for a question type: the type's own
+    (thresholds[target].per_type[type]), else None, and the type's decisions with that max_error are deferred. The
+    threshold pooled over the types (thresholds[target].confidence) is informational and never applied: a type without
+    its own certificate can run above the target under it. Only a format-1 file written before per-type thresholds
+    (no per_type at all, the basal-1.5 files) keeps its pooled threshold, its only certificate."""
     entry = (cal.get("thresholds") or {}).get(str(float(max_error))) or {}
     if "per_type" not in entry and cal.get("prompt", 1) == 1:
         return entry.get("confidence")
@@ -210,7 +238,8 @@ def certified(cal, max_error, q_type):
 
 
 def act_answer(q, probs, conf, cal):
-    """Minimum expected cost action; with max_error, automatic actions below the certified threshold are refused."""
+    """Minimum expected cost action; with max_error, automatic actions below the certified threshold of the question's
+    type are refused, and all of them when the type has no certified threshold for that target (`deferred`)."""
     spec = q["act"]
     exp = {a: sum(probs[z] * c for z, c in row.items()) for a, row in spec["costs"].items()}
     action = min(exp, key=exp.get)
@@ -239,21 +268,22 @@ def multi_answer(q, p_yes):
     conf = 1.0
     for k, v in probs.items():
         conf *= v if k in sel else 1 - v
-    if objective == "threshold":
+    if objective == "threshold":  # the 1.5 response (plus constraints_applied when the request has constraints)
         ans = {"type": "multi", "selected": sel, "probabilities": probs, "threshold": q["threshold"],
                "set_confidence": conf}
     else:
         ans = {"type": "multi", "selected": sel, "probabilities": probs, "objective": objective,
                "expected_score": score, "set_confidence": conf}
     if applied is not None:
-        if q.get("fallback") is not None:
+        if q.get("fallback") is not None:  # request, the calibration file's fit for this label set, or the default
             applied["fallback_threshold_source"] = q.get("fallback_threshold_source") or "default"
         ans["constraints_applied"] = applied
     return ans
 
 
 def stored_fallback(cal, q):
-    """A multi fallback without its own threshold takes the one fitted for the same label set, if any."""
+    """A multi question with a fallback and no fallback_threshold of its own takes the threshold basal-calibrate fitted
+    for the same label set (calibration file 2's `multi` section), if any."""
     if q.get("fallback") is None or q.get("fallback_threshold") is not None:
         return
     entry = (cal.get("multi") or {}).get(label_set_id(q["keys"], q["labels"], q["fallback"])) or {}
@@ -262,7 +292,9 @@ def stored_fallback(cal, q):
 
 
 def temperature(cal, q_type, k):
-    """Calibrated temperature of a question type with k options (bucket, else per type, else 1)."""
+    """Calibrated temperature of a question type with k options. Calibration file 2 (format-2 models) may give
+    temperature_per_bucket[type]["lo-hi"] for option-count buckets ("2-10", "11-26", "27-255"); a type or count without
+    a bucket uses temperature_per_prim[type] (the only form in 1.5 files), else 1."""
     for b, T in ((cal.get("temperature_per_bucket") or {}).get(q_type) or {}).items():
         lo, hi = (int(x) for x in b.split("-"))
         if lo <= k <= hi:
@@ -271,6 +303,7 @@ def temperature(cal, q_type, k):
 
 
 def orders_for(orders, k):
+    """Option orders of a question with k options under --orders (auto: 1 in the first pass)."""
     if orders == 2:
         return 2
     if isinstance(orders, str) and orders.startswith("2le"):
@@ -279,6 +312,8 @@ def orders_for(orders, k):
 
 
 TRUNC_MARK, TRUNC_MARGIN = "\n[…]\n", 32  # --context-overflow truncate: the cut in the state, spare tokens
+
+# fmt: on
 
 # ---- end of the copy ------------------------------------------------------------------------------------------------
 
@@ -294,8 +329,13 @@ def answer_of(q, pl, cal):
     if q["type"] == "noul":
         return {"type": "noul", "noul": probs["true"], "probabilities": probs, "confidence": conf}
     if q["type"] == "score":
-        return {"type": "score", "score": sum(i * v for i, v in enumerate(pl)),
-                "legend": dict(zip(q["keys"], q["options"])), "probabilities": probs, "confidence": conf}
+        return {
+            "type": "score",
+            "score": sum(i * v for i, v in enumerate(pl)),
+            "legend": dict(zip(q["keys"], q["options"])),
+            "probabilities": probs,
+            "confidence": conf,
+        }
     return {"type": "choice", "choice": max(probs, key=probs.get), "probabilities": probs, "confidence": conf}
 
 
@@ -330,8 +370,11 @@ def load_calibration(md, orders, layout="canonical"):
     if md is None:
         return {}, None
     sfx = [f".{layout}"] if layout != "canonical" else []
-    names = [f"CALIBRATION.vllm{s}.json" for s in sfx] + [f"CALIBRATION{s}.json" for s in sfx] + \
-        ["CALIBRATION.vllm.json", "CALIBRATION.json"]
+    names = (
+        [f"CALIBRATION.vllm{s}.json" for s in sfx]
+        + [f"CALIBRATION{s}.json" for s in sfx]
+        + ["CALIBRATION.vllm.json", "CALIBRATION.json"]
+    )
     cal = next((md / n for n in names if (md / n).exists()), None)
     if cal is None:
         return {}, None
@@ -360,9 +403,24 @@ class BasalLite:
     --context-overflow: the middle of a too long state dropped, truncate_head of the kept tokens from its start) or
     "refuse"; the limit is the server's --max-model-len minus the generated token."""
 
-    def __init__(self, url, model, model_dir=None, orders=None, fmt=None, layout=None, warm_first=False,
-                 client=None, auto_tau=0.6, auto_band=(0.2, 0.8), overflow="truncate", truncate_head=1 / 3,
-                 think_url=None, think_tokens=256, max_requests=None):
+    def __init__(
+        self,
+        url,
+        model,
+        model_dir=None,
+        orders=None,
+        fmt=None,
+        layout=None,
+        warm_first=False,
+        client=None,
+        auto_tau=0.6,
+        auto_band=(0.2, 0.8),
+        overflow="truncate",
+        truncate_head=1 / 3,
+        think_url=None,
+        think_tokens=256,
+        max_requests=None,
+    ):
         md = Path(model_dir) if model_dir else None
         self.fmt = fmt or (model_format(md) if md else 2)
         self.layout = layout or (model_layout(md) if md else "canonical")
@@ -382,11 +440,15 @@ class BasalLite:
         self.limit, self.overhead = None, None  # longest prompt (max_model_len - 1); template tokens of a prompt
         # think mode (basal-serve --think auto): a second vLLM server on <model>/think, CALIBRATION.think.json
         self.think = "auto" if think_url else "off"
-        self.think_url, self.think_tokens, self.think_len = (think_url or "").rstrip("/").removesuffix("/v1"), \
-            think_tokens, None
+        self.think_url, self.think_tokens, self.think_len = (
+            (think_url or "").rstrip("/").removesuffix("/v1"),
+            think_tokens,
+            None,
+        )
         tc = md / "CALIBRATION.think.json" if md else None
-        self.think_cal, self.think_cal_name = (json.loads(tc.read_text(encoding="utf-8")), tc.name) \
-            if tc and tc.exists() else ({}, "missing")
+        self.think_cal, self.think_cal_name = (
+            (json.loads(tc.read_text(encoding="utf-8")), tc.name) if tc and tc.exists() else ({}, "missing")
+        )
         self.media_kinds, self.max_audio_s = (), None  # basal-omni (Gemma 4): the image / audio encoders it has
         self.no_media = "this model does not take media (no image / audio encoder in config.json)"
         if md and (md / "config.json").exists():
@@ -410,6 +472,7 @@ class BasalLite:
         if not self.media_kinds:
             raise RequestError(self.no_media)
         import soundfile
+
         if self.layout != "canonical":
             raise RequestError(f"images and audio are read in the canonical layout only (this client: {self.layout})")
         try:
@@ -422,12 +485,20 @@ class BasalLite:
             buf = io.BytesIO()
             if kind == "image":
                 next(images).save(buf, format="PNG")
-                parts.append({"type": "image_url", "image_url": {
-                    "url": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}})
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()},
+                    }
+                )
             else:
                 soundfile.write(buf, next(audio), SAMPLE_RATE, format="WAV", subtype="FLOAT")
-                parts.append({"type": "input_audio", "input_audio": {
-                    "data": base64.b64encode(buf.getvalue()).decode(), "format": "wav"}})
+                parts.append(
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": base64.b64encode(buf.getvalue()).decode(), "format": "wav"},
+                    }
+                )
         return parts, soft, body.get("detail", "default")
 
     def media_chat(self, state, question, options, lang, parts):
@@ -450,14 +521,24 @@ class BasalLite:
         """The chat of one option order, ending in the prefilled assistant turn (FORMAT2.md 3.1, 3.4, 3.5)."""
         opts = "\n".join(f"{self.codes[k]}. {o}" for k, o in enumerate(options))
         user = user_template(self.fmt, lang, self.layout).format(state=state, q=question, opts=opts)
-        return [{"role": "system", "content": FORMATS[self.fmt]["templates"][lang]["system"]},
-                {"role": "user", "content": user},
-                {"role": "assistant", "content": prefill}]
+        return [
+            {"role": "system", "content": FORMATS[self.fmt]["templates"][lang]["system"]},
+            {"role": "user", "content": user},
+            {"role": "assistant", "content": prefill},
+        ]
 
     async def tokenize(self, msgs):
-        r = await self.post("/tokenize", {"model": self.model, "messages": msgs, "add_generation_prompt": False,
-                                          "continue_final_message": True, "add_special_tokens": False,
-                                          "chat_template_kwargs": {"enable_thinking": False}})
+        r = await self.post(
+            "/tokenize",
+            {
+                "model": self.model,
+                "messages": msgs,
+                "add_generation_prompt": False,
+                "continue_final_message": True,
+                "add_special_tokens": False,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
         if self.limit is None and r.get("max_model_len"):
             self.limit = r["max_model_len"] - 1  # max_model_len holds the one generated token too
         return r["tokens"]
@@ -469,8 +550,9 @@ class BasalLite:
             if self.ids is None:
                 msgs = self.messages("x", "x", ["x", "x"], "pl")
                 base = await self.tokenize(msgs)
-                fulls = await asyncio.gather(*(self.tokenize(self.messages("x", "x", ["x", "x"], "pl", PREFILL + c))
-                                               for c in self.codes))
+                fulls = await asyncio.gather(
+                    *(self.tokenize(self.messages("x", "x", ["x", "x"], "pl", PREFILL + c)) for c in self.codes)
+                )
                 for c, f in zip(self.codes, fulls):
                     if f[: len(base)] != base or len(f) != len(base) + 1:
                         raise RuntimeError(f"option code {c!r} is not one token at the answer position")
@@ -504,31 +586,42 @@ class BasalLite:
             longest = await self.longest(branches, jobs)
         if max(longest) > self.limit:
             i = max(range(len(longest)), key=longest.__getitem__)
-            raise RequestError(f"question {qs[branches[i][0]]['name']!r}: the prompt is {longest[i]} tokens (state, "
-                               f"question and options), more than the {self.limit} tokens of vLLM's --max-model-len "
-                               f"{self.limit + 1}; shorten the state, the question or the options")
+            raise RequestError(
+                f"question {qs[branches[i][0]]['name']!r}: the prompt is {longest[i]} tokens (state, "
+                f"question and options), more than the {self.limit} tokens of vLLM's --max-model-len "
+                f"{self.limit + 1}; shorten the state, the question or the options"
+            )
         return qs, branches, jobs, truncation
 
     async def longest(self, branches, jobs):
         n = [len(t) for t in await asyncio.gather(*(self.tokenize(j[0]) for j in jobs))]
         out, j = [], 0
         for _, perms in branches:
-            out.append(max(n[j: j + len(perms)]))
+            out.append(max(n[j : j + len(perms)]))
             j += len(perms)
         return out
 
     async def truncate_state(self, text, excess):
         """basal-serve's truncate_state on the server's tokenizer (/tokenize, /detokenize)."""
-        ids = (await self.post("/tokenize", {"model": self.model, "prompt": text, "add_special_tokens": False}))["tokens"]
+        ids = (await self.post("/tokenize", {"model": self.model, "prompt": text, "add_special_tokens": False}))[
+            "tokens"
+        ]
         keep = len(ids) - excess - TRUNC_MARGIN
         if keep < TRUNC_MARGIN:
             return None, None
         head = int(round(keep * self.trunc_head))
         tail = keep - head
-        dec = [(await self.post("/detokenize", {"model": self.model, "tokens": t}))["prompt"] if t else ""
-               for t in (ids[:head], ids[-tail:] if tail else [])]
-        return dec[0] + TRUNC_MARK + dec[1], {"state_tokens": len(ids), "head_tokens": head, "tail_tokens": tail,
-                                              "dropped_tokens": len(ids) - keep, "head_share": self.trunc_head}
+        dec = [
+            (await self.post("/detokenize", {"model": self.model, "tokens": t}))["prompt"] if t else ""
+            for t in (ids[:head], ids[-tail:] if tail else [])
+        ]
+        return dec[0] + TRUNC_MARK + dec[1], {
+            "state_tokens": len(ids),
+            "head_tokens": head,
+            "tail_tokens": tail,
+            "dropped_tokens": len(ids) - keep,
+            "head_share": self.trunc_head,
+        }
 
     def uncertain(self, q, perms, outs):
         """basal-serve's --orders auto test: yes/no branches inside the band, the others below tau (calibrated)."""
@@ -542,16 +635,34 @@ class BasalLite:
         """One chat completion -> (softmax over the first k option codes at the answer position, usage). extra: more
         request fields (media: mm_processor_kwargs)."""
         ids = (await self.code_ids())[:k]
-        r = await self.post("/v1/chat/completions", {**(extra or {}),
-            "model": self.model, "messages": msgs, "max_tokens": 1, "temperature": 0.0, "logprobs": True,
-            "top_logprobs": k, "allowed_token_ids": ids, "return_tokens_as_token_ids": True,
-            "continue_final_message": True, "add_generation_prompt": False, "add_special_tokens": False,
-            "chat_template_kwargs": {"enable_thinking": False}, "repetition_penalty": 1.0})
-        top = {int(t["token"].removeprefix("token_id:")): t["logprob"]
-               for t in r["choices"][0]["logprobs"]["content"][0]["top_logprobs"]}
+        r = await self.post(
+            "/v1/chat/completions",
+            {
+                **(extra or {}),
+                "model": self.model,
+                "messages": msgs,
+                "max_tokens": 1,
+                "temperature": 0.0,
+                "logprobs": True,
+                "top_logprobs": k,
+                "allowed_token_ids": ids,
+                "return_tokens_as_token_ids": True,
+                "continue_final_message": True,
+                "add_generation_prompt": False,
+                "add_special_tokens": False,
+                "chat_template_kwargs": {"enable_thinking": False},
+                "repetition_penalty": 1.0,
+            },
+        )
+        top = {
+            int(t["token"].removeprefix("token_id:")): t["logprob"]
+            for t in r["choices"][0]["logprobs"]["content"][0]["top_logprobs"]
+        }
         if not any(i in top for i in ids):
-            raise RuntimeError("no option code among the returned log-probabilities (server flags: --max-logprobs "
-                               "255 --logprobs-mode processed_logprobs)")
+            raise RuntimeError(
+                "no option code among the returned log-probabilities (server flags: --max-logprobs "
+                "255 --logprobs-mode processed_logprobs)"
+            )
         return softmax([top.get(i, -math.inf) for i in ids]), r.get("usage") or {}
 
     def canonical(self, q_type, perms, outs):
@@ -616,7 +727,9 @@ class BasalLite:
                     else:
                         # "default" = the processor's own max_soft_tokens (280); "high" needs the server's
                         # --trust-request-mm-kwargs (vLLM refuses per-request processor arguments without it)
-                        extra = None if media[2] == "default" else {"mm_processor_kwargs": {"max_soft_tokens": media[1]}}
+                        extra = (
+                            None if media[2] == "default" else {"mm_processor_kwargs": {"max_soft_tokens": media[1]}}
+                        )
                         jobs.append((self.media_chat(q["state"], question, opts, q["lang"], media[0]), k, extra))
         return orig, plans, qs, branches, jobs, media
 
@@ -635,8 +748,11 @@ class BasalLite:
             state = body["state"]
             if body.get("facts") == "auto":  # the state readout 1 saw
                 state = inject_facts(_text(state))
-            todo = [q for q in to_items(state, body["questions"], len(self.codes), force_lang=body.get("lang"))
-                    if self.routed(q, out["answers"][q["name"]], mode)]
+            todo = [
+                q
+                for q in to_items(state, body["questions"], len(self.codes), force_lang=body.get("lang"))
+                if self.routed(q, out["answers"][q["name"]], mode)
+            ]
         n_think = 0
         for q, (res, why) in zip(todo, await asyncio.gather(*(self.think_one(q) for q in todo))):
             old = out["answers"][q["name"]]
@@ -645,8 +761,12 @@ class BasalLite:
                 continue
             pl, notes, n, ms = res
             ans = answer_of(q, pl, self.think_cal)
-            ans["think"] = {"tokens": n, "ms": ms, "calibration": self.think_cal_name,
-                            "no_think": {"probabilities": old["probabilities"], "confidence": old["confidence"]}}
+            ans["think"] = {
+                "tokens": n,
+                "ms": ms,
+                "calibration": self.think_cal_name,
+                "no_think": {"probabilities": old["probabilities"], "confidence": old["confidence"]},
+            }
             if body.get("think_text"):
                 ans["think"]["text"] = notes
             out["answers"][q["name"]] = ans
@@ -668,8 +788,9 @@ class BasalLite:
         return thr is None or ans["confidence"] < thr
 
     async def think_post(self, body):
-        r = await self.http.post(self.think_url + "/v1/completions",
-                                 json=dict(body, model=self.model, temperature=0.0, seed=0))
+        r = await self.http.post(
+            self.think_url + "/v1/completions", json=dict(body, model=self.model, temperature=0.0, seed=0)
+        )
         if r.status_code != 200:
             raise RuntimeError(f"think server: {r.status_code} {r.text[:300]}")
         d = r.json()
@@ -677,7 +798,8 @@ class BasalLite:
 
     async def text_ids(self, text):
         return (await self.post("/tokenize", {"model": self.model, "prompt": text, "add_special_tokens": False}))[
-            "tokens"]
+            "tokens"
+        ]
 
     async def think_one(self, q):
         """basal/think.py think_one: greedy reasoning after <think> on the think server, then readout 2 over the state
@@ -701,8 +823,15 @@ class BasalLite:
         notes, n = c["text"], int(u["completion_tokens"])
         ids = await self.text_ids(text + OPEN + notes.strip() + "\n" + CLOSE + "\n" + PREFILL)
         codes = (await self.code_ids())[:k]
-        c, _ = await self.think_post({"prompt": ids, "max_tokens": 1, "logprobs": k, "allowed_token_ids": codes,
-                                      "return_tokens_as_token_ids": True})
+        c, _ = await self.think_post(
+            {
+                "prompt": ids,
+                "max_tokens": 1,
+                "logprobs": k,
+                "allowed_token_ids": codes,
+                "return_tokens_as_token_ids": True,
+            }
+        )
         lp = {int(t.rsplit(":", 1)[1]): v for t, v in c["logprobs"]["top_logprobs"][0].items()}
         p = softmax([lp.get(i, -1e9) for i in codes])
         pl = temper(p, temperature(self.think_cal, q.get("base", q["type"]), k))
@@ -718,7 +847,7 @@ class BasalLite:
         res = await self.ask(jobs)
         per_q, j = [[] for _ in qs], 0
         for i, perms in branches:
-            per_q[i].append((list(perms), [p for p, _ in res[j: j + len(perms)]]))
+            per_q[i].append((list(perms), [p for p, _ in res[j : j + len(perms)]]))
             j += len(perms)
         if self.orders == "auto":  # the reversed option order, only for the branches uncertain in order 1
             second = [(i, bi) for i, brs in enumerate(per_q) for bi, br in enumerate(brs) if self.uncertain(qs[i], *br)]
@@ -730,8 +859,9 @@ class BasalLite:
                     jobs2.append((self.messages(qs[i]["state"], question, opts, qs[i]["lang"]), len(opts)))
                 else:
                     extra = None if media[2] == "default" else {"mm_processor_kwargs": {"max_soft_tokens": media[1]}}
-                    jobs2.append((self.media_chat(qs[i]["state"], question, opts, qs[i]["lang"], media[0]), len(opts),
-                                  extra))
+                    jobs2.append(
+                        (self.media_chat(qs[i]["state"], question, opts, qs[i]["lang"], media[0]), len(opts), extra)
+                    )
             res2 = await self.ask(jobs2)
             for (i, bi), (p, _) in zip(second, res2):
                 perms, outs = per_q[i][bi]
@@ -753,13 +883,19 @@ class BasalLite:
             for ans in answers.values():
                 ans["calibration"] = "text"
         usage = [u for _, u in res]
-        out = {"model": self.model, "answers": answers,
-               "usage": {"input_tokens": sum(u.get("prompt_tokens", 0) for u in usage),
-                         "cached_tokens": sum((u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
-                                              for u in usage),
-                         "output_tokens": 0, "questions": len(qs), "branches": len(branches),
-                         "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
-                         "longest_prompt_tokens": max((u.get("prompt_tokens", 0) for u in usage), default=0)}}
+        out = {
+            "model": self.model,
+            "answers": answers,
+            "usage": {
+                "input_tokens": sum(u.get("prompt_tokens", 0) for u in usage),
+                "cached_tokens": sum((u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0 for u in usage),
+                "output_tokens": 0,
+                "questions": len(qs),
+                "branches": len(branches),
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+                "longest_prompt_tokens": max((u.get("prompt_tokens", 0) for u in usage), default=0),
+            },
+        }
         if self.orders == "auto":
             out["usage"]["second_order_branches"] = len(second)
         if truncation:
@@ -767,9 +903,13 @@ class BasalLite:
         if media is not None:
             kinds = [p["type"] for p in media[0]]
             out["usage"]["media"] = {
-                "images": kinds.count("image_url"), "audio": kinds.count("input_audio"), "detail": media[2],
-                "media_tokens": sum(sum(((u.get("prompt_tokens_details") or {}).get("multimodal_tokens") or {}).values())
-                                    for u in usage)}
+                "images": kinds.count("image_url"),
+                "audio": kinds.count("input_audio"),
+                "detail": media[2],
+                "media_tokens": sum(
+                    sum(((u.get("prompt_tokens_details") or {}).get("multimodal_tokens") or {}).values()) for u in usage
+                ),
+            }
         if plans:  # task answers from their decisions; extract's spans need a second round
             r2, a2 = tasks.second_round(out, orig, plans, len(self.codes)), None
             if r2 is not None:
